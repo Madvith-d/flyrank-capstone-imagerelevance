@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: capstone
+      POSTGRES_USER: capstone
+      POSTGRES_PASSWORD: capstone_dev_only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U capstone -d capstone"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://capstone:capstone_dev_only@postgres:5432/capstone
+      VISION_PROVIDER: ${VISION_PROVIDER:-local}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL:-gemini-2.5-flash}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-001}
+      MAX_AI_COST_USD: ${MAX_AI_COST_USD:-1.00}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  postgres_data:
