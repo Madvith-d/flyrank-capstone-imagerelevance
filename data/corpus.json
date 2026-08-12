@@ -1,0 +1,41 @@
+{
+  "license_note": "Images are downloaded from Wikimedia Commons by scripts/download_corpus.py; each source page and license is kept in this manifest.",
+  "images": [
+    {
+      "id": "fox-01",
+      "subject": "red fox",
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Alaska_Red_Fox_%28Vulpes_vulpes%29.jpg/960px-Alaska_Red_Fox_%28Vulpes_vulpes%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "license": "Wikimedia Commons; see source page"
+    },
+    {
+      "id": "wolf-01",
+      "subject": "gray wolf",
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/70/Front_view_of_a_resting_Canis_lupus_ssp.jpg/960px-Front_view_of_a_resting_Canis_lupus_ssp.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "license": "Wikimedia Commons; see source page"
+    },
+    {
+      "id": "dog-01",
+      "subject": "dog",
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/Human%E2%80%93canine_friendship_-_girl_hugging_her_dog_tightly_at_golden_hour_in_Laos.jpg/960px-Human%E2%80%93canine_friendship_-_girl_hugging_her_dog_tightly_at_golden_hour_in_Laos.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "license": "Wikimedia Commons; see source page"
+    },
+    {
+      "id": "bear-01",
+      "subject": "brown bear",
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/Kamchatka_Brown_Bear_near_Dvuhyurtochnoe_on_2015-07-23.jpg/960px-Kamchatka_Brown_Bear_near_Dvuhyurtochnoe_on_2015-07-23.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "license": "Wikimedia Commons; see source page"
+    },
+    {
+      "id": "deer-01",
+      "subject": "deer",
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6b/Femea_Cervo_do_Pantanal_Perfil.jpg/960px-Femea_Cervo_do_Pantanal_Perfil.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "license": "Wikimedia Commons; see source page"
+    },
+    {
+      "id": "uncertain-01",
+      "subject": "animal",
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Alaska_Red_Fox_%28Vulpes_vulpes%29.jpg/960px-Alaska_Red_Fox_%28Vulpes_vulpes%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "license": "Wikimedia Commons; see source page"
+    }
+  ]
+}

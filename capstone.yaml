@@ -1,0 +1,16 @@
+run: docker compose up --build
+seed: docker compose exec api python3 app.py seed
+test: VISION_PROVIDER=local docker compose run --rm api python3 -m unittest discover -s tests -v
+base_url: http://127.0.0.1:8000
+endpoints:
+  health: GET /health
+  batch: POST /jobs/batch
+  job: GET /jobs/{job_id}
+  images: GET /images
+  match: GET /posts/{post_id}/images
+  guard: POST /guard
+  review: POST /reviews
+  costs: GET /costs
+  eval: GET /eval
+database: PostgreSQL 16 via docker-compose; SQLite is the no-dependency test fallback
+providers: local, Gemini structured vision + embeddings, Ollama vision + embeddings

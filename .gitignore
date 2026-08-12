@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+data/*.sqlite3
+data/images/*.jpg
+data/images/*.jpeg
+data/images/*.png
+.env
+.venv/
