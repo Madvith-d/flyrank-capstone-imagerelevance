@@ -5,6 +5,10 @@ import app as engine
 
 app = FastAPI(title="AI Image Matching Engine", version="1.0.0")
 
+@app.on_event("startup")
+def _startup():
+    engine.seed()
+
 class GuardRequest(BaseModel):
     post_id: str = Field(min_length=1)
     image_id: str = Field(min_length=1)
@@ -37,6 +41,10 @@ def match(post_id: str):
 def batch(background_tasks: BackgroundTasks, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
     job = engine.create_batch_job(idempotency_key)
     if job["status"] in ("completed", "running"): return job
+    # Thread the key into the worker so a retried POST does not spawn a second job.
+    if idempotency_key:
+        job = engine.run_batch(idempotency_key=idempotency_key, job_id=job["id"])
+        return job
     background_tasks.add_task(engine.run_batch, idempotency_key, job["id"])
     return job
 

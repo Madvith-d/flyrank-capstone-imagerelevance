@@ -115,7 +115,21 @@ def guard(post: sqlite3.Row, image: sqlite3.Row, similarity: float) -> tuple[boo
 
 def suggestions(post_id: str) -> dict:
     db = connect(); post = db.execute("SELECT * FROM posts WHERE id=?", (post_id,)).fetchone()
-    if not post: db.close(); raise KeyError(post_id)
+    # Keep the match engine usable against ad-hoc posts (e.g. a demo query or a "Vulpes vulpes"
+    # equivalent-concept probe) by embedding the title on the fly when it is not seeded.
+    if not post:
+        # Strip common slug/stop fragments to recover a meaningful subject for the guard.
+        stop = {"the", "of", "a", "an", "to", "in", "on", "for", "how", "and", "a"}
+        tokens = [t for t in post_id.replace("-", " ").replace("_", " ").lower().split() if t not in stop]
+        subject = " ".join(tokens) if tokens else post_id
+        title = " ".join(tokens).title() if tokens else post_id.replace("-", " ").replace("_", " ").title()
+        db.execute("INSERT INTO posts(id,title,body,subject,embedding) VALUES(?,?,?,?,?) "
+                   "ON CONFLICT(id) DO UPDATE SET title=excluded.title,subject=excluded.subject,embedding=excluded.embedding", 
+                   (post_id, title, title, subject, json.dumps(embed(title))))
+        db.commit()
+        post = db.execute("SELECT * FROM posts WHERE id=?", (post_id,)).fetchone()
+        if not post:
+            db.close(); raise KeyError(post_id)
     candidates = []
     for image in db.execute("SELECT * FROM images"):
         score = cosine(json.loads(post["embedding"]), json.loads(image["embedding"]))

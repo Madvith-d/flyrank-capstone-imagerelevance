@@ -15,6 +15,17 @@ class CapstoneTests(unittest.TestCase):
     def test_wolf_topic_accepts_wolf(self): self.assertEqual(app.suggestions("wolf-post")["match"]["image_id"], "wolf-01")
     def test_no_match(self): self.assertIsNone(app.suggestions("unmatched-post")["match"])
     def test_eval(self): self.assertEqual(app.evaluate()["top1_precision"], 1.0)
+    def test_semantic_alias_vulpes(self):
+        # "Vulpes vulpes" is the scientific name for red fox; concepts match despite different words.
+        result = app.suggestions("vulpes-vulpes")
+        self.assertEqual(result["match"]["image_id"], "fox-01")
+    def test_guard_rejects_wolf_with_reason(self):
+        db = app.connect()
+        post = db.execute("SELECT * FROM posts WHERE id='fox-post'").fetchone()
+        wolf = db.execute("SELECT * FROM images WHERE id='wolf-01'").fetchone()
+        ok, reason = app.guard(post, wolf, 0.5)
+        db.close()
+        self.assertFalse(ok); self.assertIn("category mismatch", reason); self.assertIn("expected red fox", reason)
     def test_low_confidence_flagged(self):
         db = app.connect(); row = db.execute("SELECT status FROM images WHERE id='uncertain-01'").fetchone(); db.close(); self.assertEqual(row[0], "flagged")
     def test_batch_idempotency(self):
