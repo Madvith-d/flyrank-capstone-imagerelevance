@@ -1,65 +1,116 @@
 # AI Image Understanding & Content Matching Engine
 
-An end-to-end service that tags an image corpus, embeds image captions and article text, ranks candidates, and rejects unsafe matches. It runs offline for deterministic tests and supports PostgreSQL, Gemini, or Ollama in deployment.
+An offline-first backend service that understands an image corpus, validates structured vision metadata, embeds image descriptions and article text, ranks semantic candidates, and refuses unsafe matches. The reliability contract is simple: **good suggestions when confident, safe rejection when uncertain**.
 
-## Run
+## What is implemented
 
-### Docker + PostgreSQL
+The service contains five layers. A batch worker classifies every corpus record through a provider adapter, validates the exact `ImageTags` schema, flags low-confidence results, generates embeddings, records per-call costs, and exposes progress and failure state. The matching engine ranks image vectors against post vectors with cosine similarity. The mismatch guard rejects flagged images, subject mismatches, and candidates below the configured similarity threshold, returning a human-readable reason. The review API records approved or rejected pairings and preserves the reason shown to the reviewer.
 
-```bash
-cp .env.example .env
-docker compose up --build -d
-docker compose exec api python3 app.py seed
-docker compose exec api python3 app.py batch
-docker compose exec api python3 app.py eval
-```
-
-The API is at `http://127.0.0.1:8000`. PostgreSQL uses the named volume `postgres_data`; migrations are also checked into `migrations/001_init.sql` and applied idempotently at startup.
-
-### Local, no credentials
-
-```bash
-python3 app.py seed
-python3 app.py batch
-python3 app.py eval
-python3 app.py serve
-```
-
-### Gemini cloud mode
-
-Set `VISION_PROVIDER=gemini`, `GEMINI_API_KEY`, and optionally `GEMINI_VISION_MODEL` / `GEMINI_EMBEDDING_MODEL` in `.env`, download the licensed demo images, then run the batch:
-
-```bash
-python3 scripts/download_corpus.py
-docker compose up --build -d
-docker compose exec api python3 app.py seed
-docker compose exec api python3 app.py batch
-```
-
-Gemini structured output is validated by `ImageTags.validate()` after the SDK response. The adapter uses `gemini-3.6-flash` for vision and `gemini-embedding-001` with `SEMANTIC_SIMILARITY` for embeddings by default. The current `0.25` similarity threshold is tuned against the labeled fox/wolf eval set.
-
-### Ollama local model mode
-
-Run Ollama separately, pull a vision model and an embedding model, then set `VISION_PROVIDER=ollama`, `OLLAMA_BASE_URL`, `OLLAMA_VISION_MODEL`, and `OLLAMA_EMBEDDING_MODEL`. The same batch and guard paths are used.
-
-Then query `GET http://127.0.0.1:8000/posts/fox-post/images`. Force the wolf with `POST /guard` and body `{"post_id":"fox-post","image_id":"wolf-01"}`. Reviews use `POST /reviews` with `post_id`, `image_id`, and `decision` (`approved` or `rejected`). Batch jobs accept an `Idempotency-Key` header.
+The default provider is a deterministic local reference provider, so the evaluator can reproduce the complete behavior without credentials. Optional Gemini and Ollama adapters use the same validated provider contract.
 
 ## Architecture
 
 ```text
-images -> background batch + retry -> Gemini/Ollama/local vision -> validated tags -> embeddings -> PostgreSQL
-posts  -----------------------------------------------------------> embeddings -> indexed candidate ranking
-                                                               -> mismatch guard -> review API
+Images ──► POST /jobs/batch ──► async worker + retries ──► provider adapter
+  │                                                     ├─ local reference
+  │                                                     ├─ Gemini structured JSON
+  │                                                     └─ Ollama JSON
+  │                                                               │
+  │                                     ImageTags.validate() ◄─────┘
+  │                                              │
+  │                         image_tags + image_embeddings + costs
+  │                                              │
+Posts ───────────────────────────────────► post_embeddings
+                                                │
+GET /posts/{id}/images ─► cosine ranking ─► mismatch guard
+                                                ├─ accepted suggestion + explanation
+                                                └─ No confident match found + reasons
+                                                             │
+                                           POST /reviews ─► review trail
 ```
 
-## Quality
+See [DESIGN.md](DESIGN.md) for the one-page design, data model, API surface, guard rules, and explicit non-goal.
 
-`python3 -m unittest discover -s tests -v` covers schema rejection, low-confidence flagging, idempotent batch execution, fox ranking, wolf rejection, no-match behavior, and eval precision. The seeded labeled set has top-1 precision 1.0 (100%). Docker validation forces `VISION_PROVIDER=local` so tests never spend cloud quota; normal batch runs use the provider selected in `.env`.
+## Run locally with no credentials
+
+```bash
+cp .env.example .env
+python3 -m pip install -r requirements.txt
+VISION_PROVIDER=local python3 app.py seed
+VISION_PROVIDER=local python3 app.py batch
+VISION_PROVIDER=local python3 app.py eval
+VISION_PROVIDER=local uvicorn api:app --host 127.0.0.1 --port 8000
+```
+
+The SQLite fallback is created at `data/capstone.sqlite3`, which is ignored by Git. For the HTTP demo, the API is available at `http://127.0.0.1:8000`.
+
+## Run with Docker and PostgreSQL
+
+The one-command evaluator path is:
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+curl http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/jobs/batch -H 'Idempotency-Key: demo-batch'
+curl http://127.0.0.1:8000/jobs/<job_id>
+curl http://127.0.0.1:8000/posts/fox-post/images
+```
+
+`POST /jobs/batch` returns `202 Accepted` with a queued or running job. The worker is scheduled through FastAPI background tasks, so slow vision and embedding calls do not block the request. Use the returned job ID with `GET /jobs/{job_id}` to inspect `queued`, `running`, `completed`, or `failed` status, processed count, retries, and error details.
+
+## Acceptance probes
+
+After the batch completes, the following probes demonstrate the required behavior:
+
+```bash
+# Ranked suggestions: fox is the accepted top result.
+curl http://127.0.0.1:8000/posts/fox-post/images
+
+# Force the wolf against the fox article: the guard rejects it with a category reason.
+curl -X POST http://127.0.0.1:8000/guard \
+  -H 'Content-Type: application/json' \
+  -d '{"post_id":"fox-post","image_id":"wolf-01"}'
+
+# No suitable image: returns the no-match message and per-candidate reasons.
+curl http://127.0.0.1:8000/posts/unmatched-post/images
+
+# Human review trail: both decisions are validated and persisted.
+curl -X POST http://127.0.0.1:8000/reviews \
+  -H 'Content-Type: application/json' \
+  -d '{"post_id":"fox-post","image_id":"fox-01","decision":"approved"}'
+curl -X POST http://127.0.0.1:8000/reviews \
+  -H 'Content-Type: application/json' \
+  -d '{"post_id":"fox-post","image_id":"wolf-01","decision":"rejected"}'
+curl http://127.0.0.1:8000/reviews
+
+# Cost attribution and evaluation.
+curl http://127.0.0.1:8000/costs
+curl http://127.0.0.1:8000/eval
+```
+
+The committed evaluation set is `data/eval.json`. Its current result is **top-1 precision 1.0 (3/3)** for the red fox, gray wolf, and domestic dog labels. The unmatched article is a safety probe rather than a positive precision label.
+
+## Providers and free-tier operation
+
+Set `VISION_PROVIDER=local` for the deterministic offline path. Set `VISION_PROVIDER=gemini` with `GEMINI_API_KEY` for Gemini structured vision and semantic embeddings, or set `VISION_PROVIDER=ollama` with the Ollama URL and model names for a fully local model path. All API keys are environment-only; `.env` is ignored and `.env.example` contains placeholders. `MAX_AI_COST_USD` is a hard batch budget, while `LOW_CONFIDENCE_THRESHOLD` and `MATCH_SIMILARITY_THRESHOLD` control the guard.
+
+## Corpus and licensing
+
+The checked-in `data/corpus.json` is a small six-record acceptance corpus covering red fox, gray wolf, dog, bear, deer, and one deliberately uncertain record. Images are not committed; `scripts/download_corpus.py` downloads the Wikimedia Commons sources recorded in the manifest, preserves source URLs and license notes, and copies the uncertain fixture from the fox source. The small corpus keeps the demo free and deterministic; a production corpus should expand toward the brief's approximately 50 images and independently review every source license.
+
+## Tests and submission pack
+
+Run the deterministic suite with:
+
+```bash
+VISION_PROVIDER=local python3 -m unittest discover -s tests -v
+```
+
+The suite covers exact schema rejection, invalid confidence types, normalized tag/vector persistence, low-confidence flagging, ranking, semantic aliasing (`vulpes` → fox), mismatch rejection, no-match explanations, top-1 evaluation, idempotency, atomic background-job claiming, retry failure persistence, cost attribution, and FastAPI boundary validation.
+
+The repository includes the required `README.md`, `capstone.yaml`, `EVIDENCE.md`, `BUILDLOG.md`, and `.env.example`, plus `DESIGN.md`, the migration, and the reproducible evaluation dataset.
 
 ## Limitations
 
-The local provider is deterministic reference data and hashed vectors, so it runs without API keys. For production, download licensed image files and select Gemini or Ollama. At larger scale, replace the text vector column with pgvector/ANN search; the current corpus is intentionally small and uses an indexed PostgreSQL schema plus cosine ranking in application code.
-
-## Security and operations
-
-Secrets are read only from environment variables and are excluded by `.gitignore`. Pydantic rejects malformed API bodies with 422 responses, review decisions are constrained to `approved`/`rejected`, invalid model JSON is rejected, low-confidence results are flagged, batch calls retry three times, and `MAX_AI_COST_USD` stops a cloud batch before it exceeds its budget.
+The default local provider is a deterministic reference implementation, not a general-purpose vision model. The six-record corpus is intentionally smaller than a production library, and vectors are stored as JSON because the capstone scale does not require ANN infrastructure. The optional API key is a deployment guard, not a complete user identity or multi-tenant authorization system. These trade-offs are explicit non-goals rather than hidden behavior.

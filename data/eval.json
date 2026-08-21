@@ -1,0 +1,9 @@
+{
+  "description": "Small deterministic acceptance set for top-1 image matching.",
+  "labels": [
+    {"post_id": "fox-post", "expected_image_id": "fox-01"},
+    {"post_id": "wolf-post", "expected_image_id": "wolf-01"},
+    {"post_id": "dog-post", "expected_image_id": "dog-01"}
+  ]
+}
+

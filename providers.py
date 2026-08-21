@@ -1,11 +1,14 @@
-"""Provider adapters. Local is deterministic; Gemini is enabled with VISION_PROVIDER=gemini."""
+"""Provider adapters for deterministic local, Gemini, and Ollama execution."""
 from __future__ import annotations
 
-import base64, json, os, urllib.request
+import base64
+import json
+import os
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from app import ImageTags
+from app import CORPUS, ImageTags, embed
 
 
 @dataclass
@@ -15,6 +18,28 @@ class Call:
     input_tokens: int = 0
     output_tokens: int = 0
     cost: float = 0.0
+
+
+class LocalProvider:
+    """Reference provider: no network or credentials, but the same validated call contract."""
+
+    def classify(self, image_path: str) -> Call:
+        image_id = Path(image_path).stem
+        record = next((item for item in CORPUS if item[0] == image_id), None)
+        if record is None:
+            raise FileNotFoundError(image_path)
+        _, subject, caption, attributes, confidence = record
+        tags = ImageTags.validate({
+            "subject": subject,
+            "category": "animal",
+            "attributes": attributes,
+            "caption": caption,
+            "confidence": confidence,
+        })
+        return Call(tags, "local-reference")
+
+    def embed(self, text: str) -> Call:
+        return Call(embed(text), "local-hash")
 
 
 class GeminiProvider:
@@ -34,7 +59,8 @@ class GeminiProvider:
 
     def classify(self, image_path: str) -> Call:
         path = Path(image_path)
-        if not path.is_file(): raise FileNotFoundError(image_path)
+        if not path.is_file():
+            raise FileNotFoundError(image_path)
         mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}.get(path.suffix.lower(), "image/jpeg")
         response = self.client.models.generate_content(
             model=self.vision_model,
@@ -57,7 +83,8 @@ class OllamaProvider:
 
     def _post(self, path, payload):
         request = urllib.request.Request(self.base + path, json.dumps(payload).encode(), {"Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=120) as response: return json.load(response)
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.load(response)
 
     def classify(self, image_path: str) -> Call:
         data = base64.b64encode(Path(image_path).read_bytes()).decode()
@@ -71,4 +98,7 @@ class OllamaProvider:
 
 def provider():
     name = os.getenv("VISION_PROVIDER", "local").lower()
-    return {"gemini": GeminiProvider, "ollama": OllamaProvider}.get(name, lambda: None)()
+    return {"local": LocalProvider, "gemini": GeminiProvider, "ollama": OllamaProvider}.get(name, LocalProvider)()
+
+
+__all__ = ["Call", "LocalProvider", "GeminiProvider", "OllamaProvider", "provider"]

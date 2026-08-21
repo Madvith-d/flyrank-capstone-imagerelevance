@@ -1,26 +1,44 @@
 # Evidence
 
-Generated from the reproducible local commands on 2026-08-11; re-verified after adding semantic-alias and guard tests.
+Re-verified locally on 2026-08-21 with `VISION_PROVIDER=local`, a fresh SQLite database, and the committed six-record acceptance corpus. The primary command was:
 
-| Definition-of-done check | Evidence |
+```text
+$ VISION_PROVIDER=local python3 -m unittest discover -s tests -v
+Ran 16 tests in 0.076s
+OK
+```
+
+| Definition-of-done checkbox | Evidence |
 |---|---|
-| Structured vision output validated | `test_schema_rejects_invalid_output ... ok` — `ImageTags.validate({{"subject":"fox"}})` raises `ValueError` |
-| Low confidence flagged | `test_low_confidence_flagged ... ok`; `uncertain-01` has `status='flagged'` (confidence 0.42 < 0.70) |
-| Batch job with retries/progress | `POST /jobs/batch` → `{{"status":"completed","processed":6,"total":6,"retries":0}}`; retries capped at 3 per item |
-| Vision and embedding costs tracked | `GET /costs` after a batch → 12 rows, kinds `{{vision, embedding}}`, models `{{local-reference, local-hash}}` (Gemini: `gemini-3.6-flash` + `gemini-embedding-001`) |
-| Ranked image suggestions | `test_fox_ranks_first ... ok` — fox post's match is `fox-01` |
-| Equivalent semantic concepts | `test_semantic_alias_vulpes ... ok` — ad-hoc post `vulpes-vulpes` (scientific name for red fox) resolves to `fox-01`; aliases `vulpes→fox`, `wolves→wolf`, `canines→dog` |
-| Mismatch guard rejects wolf | `test_wolf_is_rejected ... ok` and `test_guard_rejects_wolf_with_reason ... ok`; reason `Animal category mismatch: expected red fox, detected gray wolf` |
-| Human-readable rejection/no-match | `test_no_match ... ok`; unmatched post returns message `No confident match found` with per-candidate guard reasons |
-| Persistence and review API | SQLite/PostgreSQL schema: images, posts, jobs, costs, reviews, suggestions; `POST /reviews` records `approved`/`rejected` decisions (verified live) |
-| Automated tests and eval | `python3 -m unittest discover -s tests -v`: **11 tests passed**; `GET /eval` → `{{"top1_precision": 1.0, "correct": 2, "total": 2}}` |
-| PostgreSQL deployment | `docker compose up --build` starts `postgres:16-alpine` + `api`; `migrations/001_init.sql` has all tables, `CHECK` constraints and indexes |
-| Gemini cloud path | `providers.py::GeminiProvider` uses `generate_content` with JSON-schema response and `embed_content` with `SEMANTIC_SIMILARITY`; no key committed |
-| Ollama free local path | `providers.py::OllamaProvider` calls `/api/generate` and `/api/embed`; models/base URL configurable via `.env` |
-| Gemini live smoke test | 2026-08-12: after key rotation a real Gemini job completed `processed:6, retries:0`; cost rows recorded `gemini-3.6-flash` and `gemini-embedding-001`. A later rerun hit the free-tier 20-request quota, so final cloud eval should rerun after quota reset. |
-| Boundary validation | FastAPI `GuardRequest`/`ReviewRequest` enforce non-empty IDs and `approved`/`rejected`; invalid bodies produce 422 |
-| Idempotency | `POST /jobs/batch` with `Idempotency-Key` returns the existing job on replay; `test_batch_idempotency ... ok` |
-| Retry/failure alert | Batch attempts each provider item up to 3 times; persists `failed`, `retries`, `error` before raising |
-| Background execution | FastAPI `POST /jobs/batch` queues a job and schedules `run_batch` via `BackgroundTasks` (or runs in-process with the same idempotency key); `GET /jobs/{{job_id}}` exposes progress |
-| Startup seeding | FastAPI `_startup` calls `engine.seed()` so `docker compose up` yields a ready API; ad-hoc posts are embedded on-the-fly in `suggestions()` |
-| Suggestions persistence | `suggestions` table stores rank, cosine score, accepted flag, reason with `(post_id,image_id)` uniqueness and a `(post_id, rank)` index |
+| Vision output is schema-validated and invalid output is never trusted. | `test_schema_rejects_invalid_output` and `test_schema_rejects_extra_fields_and_boolean_confidence` pass. `ImageTags.validate()` requires exactly five fields, rejects extras, and rejects malformed confidence values. Gemini and Ollama adapters validate responses before persistence. |
+| Low-confidence classifications are flagged. | `test_low_confidence_flagged` passes; `uncertain-01` is stored with `status='flagged'` because confidence `0.42` is below `LOW_CONFIDENCE_THRESHOLD=0.70`. |
+| Images run through a background batch job with retries. | `POST /jobs/batch` creates a queued job and FastAPI schedules `run_batch` through `BackgroundTasks`; `test_atomic_batch_claim` proves one queued job can be claimed once; `test_retry_failure_is_persisted` proves three attempts and a persisted `failed` status/error. |
+| Vision and embedding costs are tracked per call. | `test_costs_are_attributed` passes; the `costs` table contains `vision` and `embedding` rows with non-empty model names, item IDs, job IDs, token fields, and cost values. `MAX_AI_COST_USD` stops a batch before the configured budget is exceeded. |
+| Image and post embeddings are stored and ranked. | `test_normalized_tags_and_embeddings_are_persisted` passes with six `image_tags`, six `image_embeddings`, and four `post_embeddings` records. `test_fox_ranks_first` proves the fox candidate is ranked above the wolf. |
+| Equivalent semantic concepts match. | `test_semantic_alias_vulpes` passes: ad-hoc `vulpes-vulpes` resolves to `fox-01` through the normalized alias map. |
+| The mismatch guard rejects the wolf on a fox post. | `test_wolf_is_rejected` and `test_guard_rejects_wolf_with_reason` pass. The returned reason contains `Animal category mismatch: expected red fox, detected gray wolf`. |
+| Rejections have human-readable explanations. | Every candidate includes a non-empty `reason`; the wolf probe returns the explicit subject mismatch explanation, and `test_no_match` verifies reasons are present for all candidates. |
+| No suitable image returns a safe no-match response. | `test_no_match` passes for `unmatched-post`; response has `match: null`, message `No confident match found`, and per-candidate reasons such as subject mismatch or similarity below threshold. |
+| Database models and required indexes exist. | `migrations/001_init.sql` and the runtime schema define `images`, `image_tags`, `image_embeddings`, `posts`, `post_embeddings`, `jobs`, `costs`, `suggestions`, and constrained `reviews`; indexes cover subjects, vector models, job status/costs, review pairs, and `(post_id, rank)` suggestions. |
+| Validated API endpoints and review workflow exist. | `test_api_boundary_validation` proves invalid IDs and decisions raise Pydantic validation errors. `POST /reviews` validates the pairing, stores `approved`/`rejected` plus the displayed reason, and `GET /reviews` exposes the audit trail. Optional `API_AUTH_TOKEN` protects mutating endpoints with `X-API-Key`. |
+| Automated tests cover schema, mismatch rejection, and matching accuracy. | The deterministic suite has 16 passing tests covering schema, low confidence, ranking, semantic aliasing, guard rejection, no-match, persistence, retries, idempotency, authorization models, and evaluation. |
+| A labeled evaluation dataset measures top-1 precision. | `data/eval.json` contains three labels: fox, wolf, and dog. `GET /eval` and `python3 app.py eval` report `{"top1_precision": 1.0, "correct": 3, "total": 3}`. |
+| README, architecture, and submission-pack files exist. | `README.md`, `DESIGN.md`, `capstone.yaml`, `EVIDENCE.md`, `BUILDLOG.md`, `.env.example`, `migrations/001_init.sql`, and `data/eval.json` are committed. README includes the ASCII architecture, exact local/Docker commands, evaluator probes, precision number, and limitations. |
+
+## Acceptance probe transcript
+
+```text
+$ VISION_PROVIDER=local python3 app.py eval
+{
+  "top1_precision": 1.0,
+  "correct": 3,
+  "total": 3,
+  "dataset": "data/eval.json"
+}
+
+$ VISION_PROVIDER=local python3 -m unittest discover -s tests -v
+Ran 16 tests in 0.076s
+OK
+```
+
+The cloud providers are optional and were not invoked during the deterministic verification run, so the verification does not consume a paid or rate-limited service.
